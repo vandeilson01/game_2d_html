@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Dodger - 2D Arcade Game</title>
+    <!-- Tailwind CSS for sleek modern UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0b0f19;
+            overflow: hidden;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+        /* Custom glow effects */
+        .neon-glow {
+            box-shadow: 0 0 25px rgba(99, 102, 241, 0.4);
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen flex items-center justify-center bg-slate-950 text-white">
+
+    <!-- HUD Overlay -->
+    <div id="hud" class="absolute top-6 left-6 right-6 flex justify-between items-center pointer-events-none z-10 hidden">
+        <div class="flex gap-4">
+            <div class="bg-slate-900/80 backdrop-blur-md border border-slate-700/50 px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3">
+                <span class="text-amber-400 text-xl">⭐</span>
+                <div>
+                    <p class="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Score</p>
+                    <p id="score-val" class="text-xl font-extrabold text-white">0</p>
+                </div>
+            </div>
+            <div class="bg-slate-900/80 backdrop-blur-md border border-slate-700/50 px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3">
+                <span class="text-rose-500 text-xl">❤️</span>
+                <div>
+                    <p class="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Lives</p>
+                    <p id="lives-val" class="text-xl font-extrabold text-white">3</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-slate-900/80 backdrop-blur-md border border-slate-700/50 px-5 py-3 rounded-2xl shadow-xl hidden sm:block">
+            <p class="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Controls</p>
+            <p class="text-xs font-bold text-slate-300">Arrow Keys / WASD / Mouse</p>
+        </div>
+    </div>
+
+    <!-- Modal (Start / Game Over) -->
+    <div id="modal" class="absolute inset-0 bg-slate-950/85 backdrop-blur-lg flex items-center justify-center z-30 p-4 transition-all duration-300">
+        <div class="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl max-w-md w-full text-center space-y-6 neon-glow">
+            <div class="inline-flex p-4 bg-indigo-500/10 text-indigo-400 rounded-2xl text-4xl mb-1 shadow-inner">
+                🚀
+            </div>
+            <div>
+                <h1 id="modal-title" class="text-3xl font-black text-white tracking-tight">Neon Dodger</h1>
+                <p id="modal-desc" class="text-slate-400 mt-2 text-sm">Pilot your ship, collect golden energy stars, and dodge incoming red obstacles!</p>
+            </div>
+            <button id="action-btn" class="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-500/25 transition-all transform active:scale-95 text-lg cursor-pointer">
+                Start Mission
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Canvas -->
+    <canvas id="gameCanvas" class="w-full h-full"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI Elements
+        const hud = document.getElementById('hud');
+        const scoreValEl = document.getElementById('score-val');
+        const livesValEl = document.getElementById('lives-val');
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalDesc = document.getElementById('modal-desc');
+        const actionBtn = document.getElementById('action-btn');
+
+        // Game State
+        let gameState = 'START'; // START, PLAYING, GAMEOVER
+        let score = 0;
+        let lives = 3;
+        let animationFrameId;
+        let spawnTimer = 0;
+        let difficultyMultiplier = 1;
+
+        // Player Object
+        let player = {
+            x: 0,
+            y: 0,
+            radius: 18,
+            speed: 6,
+            color: '#6366f1',
+            targetX: 0,
+            targetY: 0,
+            isPointerActive: false
+        };
+
+        // Entities Arrays
+        let stars = [];
+        let obstacles = [];
+        let particles = [];
+
+        // Input Tracking
+        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, w: false, s: false, a: false, d: false };
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (gameState === 'START') {
+                player.x = canvas.width / 2;
+                player.y = canvas.height / 2;
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key in keys || e.key.startsWith('Arrow')) {
+                keys[e.key] = true;
+                keys[key] = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key in keys || e.key.startsWith('Arrow')) {
+                keys[e.key] = false;
+                keys[key] = false;
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameState === 'PLAYING') {
+                player.targetX = e.clientX;
+                player.targetY = e.clientY;
+                player.isPointerActive = true;
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameState === 'PLAYING' && e.touches.length > 0) {
+                player.targetX = e.touches[0].clientX;
+                player.targetY = e.touches[0].clientY;
+                player.isPointerActive = true;
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        function createExplosion(x, y, color, count = 12) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 4 + 1;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: Math.random() * 3 + 1,
+                    color: color,
+                    alpha: 1,
+                    decay: Math.random() * 0.03 + 0.015
+                });
+            }
+        }
+
+        function startGame() {
+            score = 0;
+            lives = 3;
+            difficultyMultiplier = 1;
+            spawnTimer = 0;
+            stars = [];
+            obstacles = [];
+            particles = [];
+
+            scoreValEl.textContent = score;
+            livesValEl.textContent = lives;
+
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.targetX = player.x;
+            player.targetY = player.y;
+            player.isPointerActive = false;
+
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            hud.classList.remove('hidden');
+            gameState = 'PLAYING';
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            hud.classList.add('hidden');
+            modalTitle.textContent = "Mission Failed";
+            modalDesc.textContent = `You gathered ${score} energy stars before impact. Ready to try again?`;
+            actionBtn.textContent = "Play Again";
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+        }
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+
+            // Handle Keyboard movement
+            let dx = 0;
+            let dy = 0;
+            if (keys.w || keys.ArrowUp) dy -= 1;
+            if (keys.s || keys.ArrowDown) dy += 1;
+            if (keys.a || keys.ArrowLeft) dx -= 1;
+            if (keys.d || keys.ArrowRight) dx += 1;
+
+            if (dx !== 0 || dy !== 0) {
+                player.isPointerActive = false;
+                const length = Math.hypot(dx, dy);
+                player.x += (dx / length) * player.speed;
+                player.y += (dy / length) * player.speed;
+            } else if (player.isPointerActive) {
+                // Smooth mouse/touch follow
+                player.x += (player.targetX - player.x) * 0.15;
+                player.y += (player.targetY - player.y) * 0.15;
+            }
+
+            // Keep player inside canvas bounds
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+            // Progressive difficulty
+            difficultyMultiplier = 1 + Math.floor(score / 50) * 0.15;
+
+            // Spawn collectibles & obstacles
+            spawnTimer++;
+            if (spawnTimer % 45 === 0) {
+                // Spawn Star
+                stars.push({
+                    x: Math.random() * (canvas.width - 60) + 30,
+                    y: Math.random() * (canvas.height - 60) + 30,
+                    radius: 10,
+                    pulse: 0
+                });
+            }
+
+            if (spawnTimer % Math.max(20, Math.floor(70 / difficultyMultiplier)) === 0) {
+                // Spawn Obstacle from random edge
+                const side = Math.floor(Math.random() * 4);
+                let ox, oy;
+                const speed = (Math.random() * 2 + 2.5) * difficultyMultiplier;
+
+                if (side === 0) { ox = Math.random() * canvas.width; oy = -20; }
+                else if (side === 1) { ox = canvas.width + 20; oy = Math.random() * canvas.height; }
+                else if (side === 2) { ox = Math.random() * canvas.width; oy = canvas.height + 20; }
+                else { ox = -20; oy = Math.random() * canvas.height; }
+
+                // Aim generally towards center or player
+                const angle = Math.atan2(canvas.height / 2 - oy, canvas.width / 2 - ox) + (Math.random() - 0.5) * 0.8;
+
+                obstacles.push({
+                    x: ox,
+                    y: oy,
+                    radius: Math.random() * 14 + 12,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed
+                });
+            }
+
+            // Update Stars Collision
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const s = stars[i];
+                s.pulse += 0.1;
+                const dist = Math.hypot(player.x - s.x, player.y - s.y);
+                if (dist < player.radius + s.radius) {
+                    score += 10;
+                    scoreValEl.textContent = score;
+                    createExplosion(s.x, s.y, '#f59e0b', 8);
+                    stars.splice(i, 1);
+                }
+            }
+
+            // Update Obstacles Collision
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const o = obstacles[i];
+                o.x += o.vx;
+                o.y += o.vy;
+
+                // Check collision with player
+                const dist = Math.hypot(player.x - o.x, player.y - o.y);
+                if (dist < player.radius + o.radius) {
+                    lives--;
+                    livesValEl.textContent = lives;
+                    createExplosion(player.x, player.y, '#ef4444', 16);
+                    obstacles.splice(i, 1);
+
+                    if (lives <= 0) {
+                        gameOver();
+                    }
+                }
+
+                // Remove off-screen obstacles
+                if (o.x < -100 || o.x > canvas.width + 100 || o.y < -100 || o.y > canvas.height + 100) {
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            // Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= p.decay;
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function draw() {
+            // Clear background with dark sci-fi tone
+            ctx.fillStyle = '#0b0f19';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw subtle background grid
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            const gridSize = 60;
+            ctx.beginPath();
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+            }
+            ctx.stroke();
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // Draw Stars (Collectibles)
+            stars.forEach(s => {
+                ctx.save();
+                const currentRadius = s.radius + Math.sin(s.pulse) * 2;
+                ctx.shadowColor = '#f59e0b';
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = '#fbbf24';
+                ctx.beginPath();
+                // Draw star shape
+                for (let i = 0; i < 5; i++) {
+                    const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                    const r = i % 2 === 0 ? currentRadius : currentRadius * 0.5;
+                    const sx = s.x + Math.cos(angle) * r;
+                    const sy = s.y + Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // Draw Obstacles
+            obstacles.forEach(o => {
+                ctx.save();
+                ctx.shadowColor = '#ef4444';
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(o.x, o.y, o.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // Draw Player Ship
+            if (gameState === 'PLAYING') {
+                ctx.save();
+                ctx.shadowColor = '#6366f1';
+                ctx.shadowBlur = 20;
+                ctx.fillStyle = player.color;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner core ring
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#c7d2fe';
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius * 0.5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            animationFrameId = requestAnimationFrame(loop);
+        }
+
+        // Hook up start button
+        actionBtn.addEventListener('click', startGame);
+
+        // Begin render loop
+        loop();
+    </script>
+</body>
+</html>
