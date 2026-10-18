@@ -1,5 +1,3 @@
----
-
 ## 2. README do Jogo 2D (HTML5 Canvas)
 
 ```markdown
